@@ -37,6 +37,8 @@ jobs:
       
     - name: Run unit tests
       run: dotnet test src/PowerTradePosition.Domain.UnitTests/PowerTradePosition.Domain.UnitTests.csproj --configuration Release --no-build --verbosity normal --collect:"XPlat Code Coverage" --results-directory ./TestResults --logger trx --logger "console;verbosity=detailed"
+      env:
+        TZ: UTC
       
     - name: Publish test results
       uses: dorny/test-reporter@v1
