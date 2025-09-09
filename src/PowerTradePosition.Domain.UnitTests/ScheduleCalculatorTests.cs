@@ -241,7 +241,7 @@ public class ScheduleCalculatorTests
     [Theory]
     [InlineData(2023, 7, 1, 0, 0, 0, 2023, 7, 2)]   // Midnight UTC = 2:00 AM Berlin (CEST, UTC+2) -> next day
     [InlineData(2023, 7, 1, 12, 0, 0, 2023, 7, 2)]  // Noon UTC = 2:00 PM Berlin (CEST, UTC+2) -> next day
-    [InlineData(2023, 7, 1, 22, 0, 0, 2023, 7, 2)]  // 10:00 PM UTC = midnight Berlin (CEST, UTC+2) -> next day
+    [InlineData(2023, 7, 1, 21, 59, 59, 2023, 7, 2)]  // 9:59:59 PM UTC = 11:59:59 PM Berlin (CEST, UTC+2) -> next day
     [InlineData(2023, 12, 31, 22, 59, 59, 2024, 1, 1)] // 10:59:59 PM UTC = 11:59:59 PM Berlin (CET, UTC+1) -> next day
     public void CalculateDayAheadDate_VariousTimes_ReturnsNextDay(
         int currentYear, int currentMonth, int currentDay, int currentHour, int currentMinute, int currentSecond,
