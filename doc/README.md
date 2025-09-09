@@ -14,8 +14,8 @@ Power traders need an intra-day report that provides their consolidated day-ahea
 - **CSV Output**: Generates CSV files with ISO 8601 datetime format and semicolon separators
 - **Flexible Configuration**: Supports command-line arguments and configuration files
 - **Production Logging**: Comprehensive logging for production support and debugging
-- **Centralized Scheduling**: Dedicated `ScheduleCalculator` class for better separation of concerns
-- **Configuration Validation**: Early validation of configuration values at the property level
+- **Centralized Scheduling**: Dedicated `ScheduleCalculator` class
+- **Configuration Validation**: Property-level validation with CommandLineParser package
 
 ## Requirements
 
@@ -27,12 +27,16 @@ Power traders need an intra-day report that provides their consolidated day-ahea
 
 ```
 PowerTradePosition/
-├── PowerTradePosition.Console/          # Console application entry point
-├── PowerTradePosition.Domain/           # Domain models and business logic
-│   ├── Domain/                         # Domain entities and services
-│   └── Interfaces/                     # Domain interfaces
-├── PowerTradePosition.DataAccess/       # Data access layer
-└── lib/                                # External dependencies (PowerService.dll)
+├── src/
+│   ├── PowerTradePosition.Console/          # Console application entry point
+│   ├── PowerTradePosition.Domain/           # Domain models and business logic
+│   │   ├── Domain/                         # Domain entities and services
+│   │   └── Interfaces/                     # Domain interfaces
+│   ├── PowerTradePosition.DataAccess/       # Data access layer
+│   ├── PowerTradePosition.Domain.UnitTests/ # Unit tests
+│   └── PowerTradePosition.sln              # Solution file
+├── lib/                                    # External dependencies (PowerService.dll)
+└── doc/                                    # Documentation
 ```
 
 ## Architecture
@@ -44,7 +48,7 @@ The solution follows SOLID principles and implements several design patterns:
 - **Strategy Pattern**: Different implementations for CSV writing, file system operations, and scheduling
 - **Factory Pattern**: Configuration service for creating application settings
 - **Observer Pattern**: Background service for scheduled operations
-- **Separation of Concerns**: Scheduling logic extracted to dedicated `ScheduleCalculator` class
+- **Separation of Concerns**: Clean architecture with dedicated scheduling logic
 
 For detailed architectural information, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -61,7 +65,7 @@ For method-level requirements fulfillment documentation, see [METHODS_DOCUMENTAT
 
 ### Configuration File (appsettings.json)
 
-The application uses a custom configuration service that loads settings from `appsettings.json`:
+The application uses a configuration service that loads settings from `appsettings.json`:
 
 ```json
 {
@@ -74,18 +78,13 @@ The application uses a custom configuration service that loads settings from `ap
   },
   "OutputFolderPath": "Output",
   "ExtractIntervalMinutes": 15,
-  "TimeZoneId": "Europe/Berlin",
-  "RetryAttempts": 3,
-  "RetryDelaySeconds": 30
+  "TimeZoneId": "Europe/Berlin"
 }
 ```
 
 **Note**: Command line arguments take precedence over configuration file settings.
 
-All numeric configuration values are validated at the property level:
-- `ExtractIntervalMinutes` must be greater than 0
-- `RetryAttempts` must be greater than 0
-- `RetryDelaySeconds` must be greater than 0
+**Validation**: `ExtractIntervalMinutes` > 0, required `OutputFolderPath`, valid `TimeZoneId`
 
 ## Requirements Fulfillment
 
@@ -105,8 +104,8 @@ This application fully implements all requirements from the specification:
 ✅ **PowerService Integration**: Uses provided PowerService.dll assembly  
 ✅ **Day-Ahead Logic**: Requests data for the following day  
 ✅ **Timezone Independence**: Consistent output regardless of server location  
-✅ **Centralized Scheduling**: Scheduling logic extracted to dedicated class  
-✅ **Configuration Validation**: Early validation of configuration values  
+✅ **Centralized Scheduling**: Dedicated `ScheduleCalculator` class  
+✅ **Configuration Validation**: Property-level validation with CommandLineParser  
 
 ## Usage
 
@@ -194,13 +193,10 @@ dotnet publish PowerTradePosition.Console -c Release -o ./publish
 Orchestrates the extraction process with retry logic and error handling.
 
 ### ScheduledExtractor
-Background service that manages scheduled executions with timing tolerance. Focuses on background service orchestration while delegating scheduling calculations to `ScheduleCalculator`.
+Background service that manages scheduled executions with timing tolerance.
 
 ### ScheduleCalculator
-Dedicated class that handles all scheduling logic, including:
-- Calculating next execution intervals
-- Determining delays until next execution
-- Handling timezone and interval configurations
+Dedicated class that handles scheduling logic: calculating intervals, delays, and timezone configurations.
 
 ### PositionAggregator
 Aggregates power trades by hour, handling timezone conversions and period mapping.
@@ -215,46 +211,29 @@ Generates CSV files with proper formatting and naming conventions.
 Wraps the external PowerService.dll using reflection for dynamic loading.
 
 ### CommandLineParser
-Custom configuration service that handles command line arguments and configuration file loading with proper precedence.
+Configuration service using CommandLineParser NuGet package for argument parsing and file loading.
 
 ### ApplicationConfiguration
-Enhanced configuration class with property-level validation:
-- All numeric properties validate values at the setter level
-- Clear error messages for invalid configuration
-- Prevents invalid configuration from propagating through the system
+Configuration class with property-level validation for `ExtractIntervalMinutes` (must be > 0).
 
 ## Error Handling
 
-- **Retry Logic**: Configurable retry attempts with exponential backoff
+- **Retry Logic**: Built-in retry mechanism with exponential backoff
 - **Logging**: Comprehensive logging at all levels for debugging
 - **Graceful Degradation**: Continues operation even if individual extractions fail
-- **Exception Handling**: Proper exception handling throughout the application
-- **Configuration Validation**: Early detection and clear error messages for invalid configuration
+- **Configuration Validation**: Early detection and clear error messages
 
 ## Timezone Handling
 
-The application properly handles:
-- Europe/Berlin timezone (as specified in requirements)
-- Daylight Saving Time transitions
-- UTC conversion for output consistency
-- Server location independence
+Handles Europe/Berlin timezone with DST transitions, UTC conversion, and server location independence.
 
 ## Testing Considerations
 
-The solution is designed to be testable:
-- All dependencies are abstracted through interfaces
-- Services can be easily mocked for unit testing
-- Configuration is externalized and injectable
-- Business logic is separated from infrastructure concerns
-- **Scheduling Logic**: Can be tested independently with mocked time and configuration
-- **Configuration Validation**: Comprehensive test coverage for validation logic
+Designed for testability with interface abstractions, mockable services, externalized configuration, and separated business logic.
 
 ## Production Deployment
 
-- **Logging**: Configure appropriate log levels for production
-- **Configuration**: Use environment-specific configuration files
-- **Monitoring**: Monitor application logs and CSV file generation
-- **Error Handling**: Configure appropriate retry policies and alerting
+Configure appropriate log levels, environment-specific configuration files, and monitor application logs and CSV generation.
 
 ## Troubleshooting
 
@@ -264,38 +243,23 @@ The solution is designed to be testable:
 2. **Timezone errors**: Verify the timezone ID is valid for the target system
 3. **Permission errors**: Ensure the application has write access to the output folder
 4. **Scheduling issues**: Check the interval configuration and system time
-5. **Configuration validation errors**: Check that all numeric configuration values are greater than 0
+5. **Configuration validation errors**: Check that ExtractIntervalMinutes is greater than 0 and timezone is valid
 
 ### Log Analysis
 
-The application provides detailed logging for:
-- Configuration loading
-- Trade retrieval
-- Position aggregation
-- File operations
-- Scheduling operations
-- Error conditions
-- Configuration validation failures
+Provides detailed logging for configuration loading, trade retrieval, position aggregation, file operations, scheduling, and error conditions.
 
 ## Known Limitations
 
 1. **Help Command**: The `--help` flag displays help information and exits the application
-2. **Configuration Precedence**: Command line arguments override configuration file settings, but the merge logic is custom-implemented
+2. **Configuration Precedence**: Command line arguments override configuration file settings
 3. **Single Instance**: The application is designed to run as a single instance
 
 ## Architecture Highlights
 
-### Scheduling Logic Design
-- **Implementation**: Dedicated `ScheduleCalculator` class handles all scheduling calculations
-- **Benefits**: Better separation of concerns, easier testing, more focused classes
-
-### Configuration Validation
-- **Implementation**: Property-level validation prevents invalid values from being set
-- **Benefits**: Early error detection, clearer error messages, better data integrity
-
-### Enhanced Testability
-- **Implementation**: `ScheduleCalculator` can be tested independently with mocked dependencies
-- **Benefits**: Better test coverage, easier debugging, more maintainable code
+- **Scheduling Logic**: Dedicated `ScheduleCalculator` class for better separation of concerns and testability
+- **Configuration Validation**: Property-level validation with early error detection and clear messages
+- **Enhanced Testability**: Independent testing with mocked dependencies for better coverage
 
 ## License
 
