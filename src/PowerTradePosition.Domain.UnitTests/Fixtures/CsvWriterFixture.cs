@@ -16,7 +16,6 @@ public class CsvWriterFixture : BaseTestFixture
         // Create the CsvWriter with mocked dependencies
         CsvWriter = new CsvWriter(
             MockFileSystem.Object,
-            Configuration,
             new NullLogger<CsvWriter>());
     }
 

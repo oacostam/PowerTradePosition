@@ -4,7 +4,7 @@ using System.Globalization;
 
 namespace PowerTradePosition.Domain.Domain;
 
-public class CsvWriter(IFileSystem fileSystem, ApplicationConfiguration configuration, ILogger<CsvWriter> logger) : ICsvWriter
+public class CsvWriter(IFileSystem fileSystem, ILogger<CsvWriter> logger) : ICsvWriter
 {
 
     public async Task WriteToFileAsync(IEnumerable<PowerPosition> positions, DateTime dayAheadDate, DateTime extractionTime, string outputFolderPath, CancellationToken ct)
@@ -32,8 +32,8 @@ public class CsvWriter(IFileSystem fileSystem, ApplicationConfiguration configur
                 select $"{datetimeStr};{volumeStr}");
 
             // Ensure output directory exists
-            if (!fileSystem.DirectoryExists(configuration.OutputFolderPath))
-                fileSystem.CreateDirectory(configuration.OutputFolderPath);
+            if (!fileSystem.DirectoryExists(outputFolderPath))
+                fileSystem.CreateDirectory(outputFolderPath);
 
             await File.WriteAllLinesAsync(filePath, lines, ct);
 
