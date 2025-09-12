@@ -1,217 +1,96 @@
-﻿using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Time.Testing;
-using Moq;
+﻿using Moq;
 using PowerTradePosition.Domain.Domain;
-using PowerTradePosition.Domain.Interfaces;
+using PowerTradePosition.Domain.UnitTests.Fixtures;
 using Xunit.Abstractions;
 
 namespace PowerTradePosition.Domain.UnitTests;
 
-public class PositionExtractorTests
+public class PositionExtractorTests : IClassFixture<PositionExtractorFixture>
 {
     private readonly ITestOutputHelper _testOutputHelper;
+    private readonly PositionExtractorFixture _fixture;
 
-    public PositionExtractorTests(ITestOutputHelper testOutputHelper)
+    public PositionExtractorTests(ITestOutputHelper testOutputHelper, PositionExtractorFixture fixture)
     {
         _testOutputHelper = testOutputHelper;
+        _fixture = fixture;
     }
 
     [Fact]
     public async Task Extract_ThrowsException_OnFailure()
     {
         // Arrange
-        var mockTradeService = new Mock<ITradeService>();
-        mockTradeService.Setup(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new Exception("Service failure"));
-
-        var mockScheduleCalculator = new Mock<IScheduleCalculator>();
-        mockScheduleCalculator.Setup(x => x.CalculateDayAheadDate()).Returns(DateTime.Today.AddDays(1));
-        mockScheduleCalculator.Setup(x => x.GetCurrentTimeInConfiguredTimeZone()).Returns(DateTime.UtcNow);
-
-        var mockFileSystem = new Mock<IFileSystem>();
-        mockFileSystem.Setup(x => x.DirectoryExists(It.IsAny<string>())).Returns(false);
-        mockFileSystem.Setup(x => x.CreateDirectory(It.IsAny<string>()));
-
-        var mockCsvWriter = new Mock<ICsvWriter>();
-
-        var grid = new TimeGridBuilder(new NullLogger<TimeGridBuilder>());
-        var aggregator = new PositionAggregator(grid, new NullLogger<PositionAggregator>());
-        var cfg = new ApplicationConfiguration
-        {
-            OutputFolderPath = Path.GetTempPath(),
-            TimeZoneId = "Europe/Berlin"
-        };
-        var timeProvider = new FakeTimeProvider();
-        timeProvider.SetUtcNow(new DateTimeOffset(2024, 1, 2, 12, 0, 0, TimeSpan.Zero));
-
-        var extractor = new PositionExtractor(
-            mockTradeService.Object,
-            aggregator,
-            mockCsvWriter.Object,
-            cfg,
-            timeProvider,
-            mockScheduleCalculator.Object,
-            new NullLogger<PositionExtractor>());
+        _fixture.ResetMocks();
+        _fixture.SetupServiceFailure();
 
         // Act & Assert
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await Assert.ThrowsAsync<Exception>(() => extractor.ExtractPositionsAsync(cts.Token));
+        using var cts = _fixture.CreateCancellationTokenSource();
+        await Assert.ThrowsAsync<Exception>(() => _fixture.PositionExtractor.ExtractPositionsAsync(cts.Token));
         
-        mockTradeService.Verify(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Once);
-        mockCsvWriter.Verify(
-            x => x.WriteToFileAsync(It.IsAny<IEnumerable<PowerPosition>>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _fixture.VerifyTradeServiceCalledOnce();
+        _fixture.VerifyCsvWriterNeverCalled();
     }
 
     [Fact]
     public async Task Extract_HandlesNoTrades_ReturnsEarly()
     {
         // Arrange
-        var mockTradeService = new Mock<ITradeService>();
-        mockTradeService.Setup(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
-
-        var mockScheduleCalculator = new Mock<IScheduleCalculator>();
-        mockScheduleCalculator.Setup(x => x.CalculateDayAheadDate()).Returns(DateTime.Today.AddDays(1));
-        mockScheduleCalculator.Setup(x => x.GetCurrentTimeInConfiguredTimeZone()).Returns(DateTime.UtcNow);
-
-        var mockFileSystem = new Mock<IFileSystem>();
-        mockFileSystem.Setup(x => x.DirectoryExists(It.IsAny<string>())).Returns(true);
-
-        var mockCsvWriter = new Mock<ICsvWriter>();
-
-        var grid = new TimeGridBuilder(new NullLogger<TimeGridBuilder>());
-        var aggregator = new PositionAggregator(grid, new NullLogger<PositionAggregator>());
-        var cfg = new ApplicationConfiguration
-        {
-            OutputFolderPath = Path.GetTempPath(),
-            TimeZoneId = "Europe/Berlin"
-        };
-        var timeProvider = new FakeTimeProvider();
-        timeProvider.SetUtcNow(new DateTimeOffset(2024, 1, 2, 12, 0, 0, TimeSpan.Zero));
-
-        var extractor = new PositionExtractor(
-            mockTradeService.Object,
-            aggregator,
-            mockCsvWriter.Object,
-            cfg,
-            timeProvider,
-            mockScheduleCalculator.Object,
-            new NullLogger<PositionExtractor>());
+        _fixture.ResetMocks();
+        _fixture.SetupNoTrades();
 
         // Act
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await extractor.ExtractPositionsAsync(cts.Token);
+        using var cts = _fixture.CreateCancellationTokenSource();
+        await _fixture.PositionExtractor.ExtractPositionsAsync(cts.Token);
 
         // Assert
-        mockTradeService.Verify(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Once);
-        mockCsvWriter.Verify(
-            x => x.WriteToFileAsync(It.IsAny<IEnumerable<PowerPosition>>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        mockFileSystem.Verify(x => x.CreateDirectory(It.IsAny<string>()), Times.Never);
+        _fixture.VerifyTradeServiceCalledOnce();
+        _fixture.VerifyCsvWriterNeverCalled();
+        _fixture.VerifyDirectoryCreationNeverCalled();
     }
 
     [Fact]
     public async Task Extract_HandlesNoPositions_ReturnsEarly()
     {
         // Arrange
-        var mockTradeService = new Mock<ITradeService>();
-        mockTradeService.Setup(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([new PowerTrade(DateTime.Today.AddDays(1), [])]);
-
-        var mockScheduleCalculator = new Mock<IScheduleCalculator>();
-        mockScheduleCalculator.Setup(x => x.CalculateDayAheadDate()).Returns(DateTime.Today.AddDays(1));
-        mockScheduleCalculator.Setup(x => x.GetCurrentTimeInConfiguredTimeZone()).Returns(DateTime.UtcNow);
-
-        var mockFileSystem = new Mock<IFileSystem>();
-        mockFileSystem.Setup(x => x.DirectoryExists(It.IsAny<string>())).Returns(true);
-
-        var mockCsvWriter = new Mock<ICsvWriter>();
-
-        var grid = new TimeGridBuilder(new NullLogger<TimeGridBuilder>());
-        var aggregator = new PositionAggregator(grid, new NullLogger<PositionAggregator>());
-        var cfg = new ApplicationConfiguration
-        {
-            OutputFolderPath = Path.GetTempPath(),
-            TimeZoneId = "Europe/Berlin"
-        };
-        var timeProvider = new FakeTimeProvider();
-        timeProvider.SetUtcNow(new DateTimeOffset(2024, 1, 2, 12, 0, 0, TimeSpan.Zero));
-
-        var extractor = new PositionExtractor(
-            mockTradeService.Object,
-            aggregator,
-            mockCsvWriter.Object,
-            cfg,
-            timeProvider,
-            mockScheduleCalculator.Object,
-            new NullLogger<PositionExtractor>());
+        _fixture.ResetMocks();
+        var dayAheadDate = DateTime.Today.AddDays(1);
+        _fixture.MockTradeService.Setup(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new PowerTrade(dayAheadDate, [])]);
+        _fixture.MockScheduleCalculator.Setup(x => x.CalculateDayAheadDate()).Returns(dayAheadDate);
 
         // Act
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await extractor.ExtractPositionsAsync(cts.Token);
+        using var cts = _fixture.CreateCancellationTokenSource();
+        await _fixture.PositionExtractor.ExtractPositionsAsync(cts.Token);
 
         // Assert
-        mockTradeService.Verify(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Once);
+        _fixture.VerifyTradeServiceCalledOnce();
         // Note: Even with empty periods, the aggregator still creates positions, so CSV writer is called
-        mockCsvWriter.Verify(
-            x => x.WriteToFileAsync(It.IsAny<IEnumerable<PowerPosition>>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _fixture.VerifyCsvWriterCalledOnce();
     }
 
     [Fact]
     public async Task Extract_ThrowsException_OnPersistentFailure()
     {
         // Arrange
-        var mockTradeService = new Mock<ITradeService>();
-        mockTradeService.Setup(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new Exception("Persistent failure"));
-
-        var mockScheduleCalculator = new Mock<IScheduleCalculator>();
-        mockScheduleCalculator.Setup(x => x.CalculateDayAheadDate()).Returns(DateTime.Today.AddDays(1));
-        mockScheduleCalculator.Setup(x => x.GetCurrentTimeInConfiguredTimeZone()).Returns(DateTime.UtcNow);
-
-        var mockFileSystem = new Mock<IFileSystem>();
-        mockFileSystem.Setup(x => x.DirectoryExists(It.IsAny<string>())).Returns(true);
-
-        var mockCsvWriter = new Mock<ICsvWriter>();
-
-        var grid = new TimeGridBuilder(new NullLogger<TimeGridBuilder>());
-        var aggregator = new PositionAggregator(grid, new NullLogger<PositionAggregator>());
-        var cfg = new ApplicationConfiguration
-        {
-            OutputFolderPath = Path.GetTempPath(),
-            TimeZoneId = "Europe/Berlin"
-        };
-        var timeProvider = new FakeTimeProvider();
-        timeProvider.SetUtcNow(new DateTimeOffset(2024, 1, 2, 12, 0, 0, TimeSpan.Zero));
-
-        var extractor = new PositionExtractor(
-            mockTradeService.Object,
-            aggregator,
-            mockCsvWriter.Object,
-            cfg,
-            timeProvider,
-            mockScheduleCalculator.Object,
-            new NullLogger<PositionExtractor>());
+        _fixture.ResetMocks();
+        _fixture.SetupServiceFailure("Persistent failure");
 
         // Act & Assert
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var exception = await Assert.ThrowsAsync<Exception>(() => extractor.ExtractPositionsAsync(cts.Token));
+        using var cts = _fixture.CreateCancellationTokenSource();
+        var exception = await Assert.ThrowsAsync<Exception>(() => _fixture.PositionExtractor.ExtractPositionsAsync(cts.Token));
         Assert.Equal("Persistent failure", exception.Message);
 
-        mockTradeService.Verify(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()),
-            Times.Once); // Only one attempt since no retry logic
+        _fixture.VerifyTradeServiceCalledOnce(); // Only one attempt since no retry logic
     }
 
     [Fact]
     public void TimeGridBuilder_HandlesDSTTransition_Correctly()
     {
         // Test the time grid builder directly for DST transition
+        _fixture.ResetMocks();
         var dayAheadDate = new DateTime(2024, 3, 31); // March 31, 2024 (Sunday) - DST spring forward
 
-        var grid = new TimeGridBuilder(new NullLogger<TimeGridBuilder>());
-        var timeGrid = grid.BuildHourlyTimeGrid(dayAheadDate, "Europe/Berlin").ToList();
+        var timeGrid = _fixture.TimeGridBuilder.BuildHourlyTimeGrid(dayAheadDate, "Europe/Berlin").ToList();
 
         _testOutputHelper.WriteLine($"Time grid for {dayAheadDate:yyyy-MM-dd} in Europe/Berlin:");
         for (var i = 0; i < timeGrid.Count; i++)
@@ -244,74 +123,22 @@ public class PositionExtractorTests
         // In Europe/Berlin, clocks move forward 1 hour at 2:00 AM on March 31, 2024
         // This means 2:00 AM becomes 3:00 AM, so we "lose" one hour
 
+        _fixture.ResetMocks();
         var dayAheadDate = new DateTime(2024, 3, 31); // March 31, 2024 (Sunday)
         var extractionTime = new DateTime(2024, 3, 30, 21, 15, 0); // March 30, 2024 at 21:15 (UTC)
 
-        // Create test data with the same pattern as the requirements example
-        var trades = new[]
-        {
-            new PowerTrade(
-                dayAheadDate,
-                Enumerable.Range(1, 24).Select(p => new PowerPeriod(p, 100)).ToArray()
-            ),
-            new PowerTrade(
-                dayAheadDate,
-                Enumerable.Range(1, 24).Select(p => new PowerPeriod(p, 50)).ToArray()
-            ),
-            new PowerTrade(
-                dayAheadDate,
-                Enumerable.Range(1, 24).Select(p => new PowerPeriod(p, p >= 12 ? -20 : 0)).ToArray()
-            )
-        };
+        // Setup DST test scenario
+        _fixture.SetupDstTest(dayAheadDate, extractionTime);
 
-        var mockTradeService = new Mock<ITradeService>();
-        mockTradeService.Setup(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(trades);
-
-        var mockScheduleCalculator = new Mock<IScheduleCalculator>();
-        mockScheduleCalculator.Setup(x => x.CalculateDayAheadDate()).Returns(dayAheadDate);
-        mockScheduleCalculator.Setup(x => x.GetCurrentTimeInConfiguredTimeZone()).Returns(extractionTime);
-
-        var mockFileSystem = new Mock<IFileSystem>();
-        mockFileSystem.Setup(x => x.DirectoryExists(It.IsAny<string>())).Returns(true);
-
-        var mockCsvWriter = new Mock<ICsvWriter>();
-        mockCsvWriter.Setup(x => x.WriteToFileAsync(It.IsAny<IEnumerable<PowerPosition>>(), It.IsAny<DateTime>(),
-                It.IsAny<DateTime>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var grid = new TimeGridBuilder(new NullLogger<TimeGridBuilder>());
-        var aggregator = new PositionAggregator(grid, new NullLogger<PositionAggregator>());
-        var cfg = new ApplicationConfiguration
-        {
-            OutputFolderPath = Path.GetTempPath(),
-            TimeZoneId = "Europe/Berlin"
-        };
-
-        var timeProvider = new FakeTimeProvider();
-        timeProvider.SetUtcNow(new DateTimeOffset(extractionTime, TimeSpan.Zero));
-
-        var extractor = new PositionExtractor(
-            mockTradeService.Object,
-            aggregator,
-            mockCsvWriter.Object,
-            cfg,
-            timeProvider,
-            mockScheduleCalculator.Object,
-            new NullLogger<PositionExtractor>()
-        );
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await extractor.ExtractPositionsAsync(cts.Token);
+        using var cts = _fixture.CreateCancellationTokenSource();
+        await _fixture.PositionExtractor.ExtractPositionsAsync(cts.Token);
 
         // Verify the extraction was successful
-        mockTradeService.Verify(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Once);
-        mockCsvWriter.Verify(
-            x => x.WriteToFileAsync(It.IsAny<IEnumerable<PowerPosition>>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _fixture.VerifyTradeServiceCalledOnce();
+        _fixture.VerifyCsvWriterCalledOnce();
 
         // Verify the CSV writer was called with the correct parameters
-        mockCsvWriter.Verify(x => x.WriteToFileAsync(
+        _fixture.MockCsvWriter.Verify(x => x.WriteToFileAsync(
             It.IsAny<IEnumerable<PowerPosition>>(),
             dayAheadDate,
             It.IsAny<DateTime>(),
@@ -319,7 +146,7 @@ public class PositionExtractorTests
             It.IsAny<CancellationToken>()), Times.Once);
 
         // Verify the time progression accounts for DST change
-        var timeGrid = grid.BuildHourlyTimeGrid(dayAheadDate, "Europe/Berlin").ToList();
+        var timeGrid = _fixture.TimeGridBuilder.BuildHourlyTimeGrid(dayAheadDate, "Europe/Berlin").ToList();
         _testOutputHelper.WriteLine($"Time grid for {dayAheadDate:yyyy-MM-dd} in Europe/Berlin:");
         for (var i = 0; i < timeGrid.Count; i++)
             _testOutputHelper.WriteLine($"Period {i + 1}: {timeGrid[i]:yyyy-MM-ddTHH:mm:ssZ} (UTC)");
@@ -344,70 +171,22 @@ public class PositionExtractorTests
         // This means 3:00 AM becomes 2:00 AM, so we "gain" one hour
         // Using 2022 as it's more likely to have timezone data in all environments
 
+        _fixture.ResetMocks();
         var dayAheadDate = new DateTime(2022, 10, 30); // October 30, 2022 (Sunday)
         var extractionTime = new DateTime(2022, 10, 29, 21, 15, 0); // October 29, 2022 at 21:15 (UTC)
 
-        // Create test data
-        var trades = new[]
-        {
-            new PowerTrade(
-                dayAheadDate,
-                Enumerable.Range(1, 24).Select(p => new PowerPeriod(p, 100)).ToArray()
-            ),
-            new PowerTrade(
-                dayAheadDate,
-                Enumerable.Range(1, 24).Select(p => new PowerPeriod(p, 50)).ToArray()
-            )
-        };
+        // Setup DST fallback test scenario
+        _fixture.SetupDstTest(dayAheadDate, extractionTime);
 
-        var mockTradeService = new Mock<ITradeService>();
-        mockTradeService.Setup(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(trades);
-
-        var mockScheduleCalculator = new Mock<IScheduleCalculator>();
-        mockScheduleCalculator.Setup(x => x.CalculateDayAheadDate()).Returns(dayAheadDate);
-        mockScheduleCalculator.Setup(x => x.GetCurrentTimeInConfiguredTimeZone()).Returns(extractionTime);
-
-        var mockFileSystem = new Mock<IFileSystem>();
-        mockFileSystem.Setup(x => x.DirectoryExists(It.IsAny<string>())).Returns(true);
-
-        var mockCsvWriter = new Mock<ICsvWriter>();
-        mockCsvWriter.Setup(x => x.WriteToFileAsync(It.IsAny<IEnumerable<PowerPosition>>(), It.IsAny<DateTime>(),
-                It.IsAny<DateTime>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var grid = new TimeGridBuilder(new NullLogger<TimeGridBuilder>());
-        var aggregator = new PositionAggregator(grid, new NullLogger<PositionAggregator>());
-        var cfg = new ApplicationConfiguration
-        {
-            OutputFolderPath = Path.GetTempPath(),
-            TimeZoneId = "Europe/Berlin"
-        };
-
-        var timeProvider = new FakeTimeProvider();
-        timeProvider.SetUtcNow(new DateTimeOffset(extractionTime, TimeSpan.Zero));
-
-        var extractor = new PositionExtractor(
-            mockTradeService.Object,
-            aggregator,
-            mockCsvWriter.Object,
-            cfg,
-            timeProvider,
-            mockScheduleCalculator.Object,
-            new NullLogger<PositionExtractor>()
-        );
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await extractor.ExtractPositionsAsync(cts.Token);
+        using var cts = _fixture.CreateCancellationTokenSource();
+        await _fixture.PositionExtractor.ExtractPositionsAsync(cts.Token);
 
         // Verify the extraction was successful
-        mockTradeService.Verify(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Once);
-        mockCsvWriter.Verify(
-            x => x.WriteToFileAsync(It.IsAny<IEnumerable<PowerPosition>>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _fixture.VerifyTradeServiceCalledOnce();
+        _fixture.VerifyCsvWriterCalledOnce();
 
         // Verify the CSV writer was called with the correct parameters
-        mockCsvWriter.Verify(x => x.WriteToFileAsync(
+        _fixture.MockCsvWriter.Verify(x => x.WriteToFileAsync(
             It.IsAny<IEnumerable<PowerPosition>>(),
             dayAheadDate,
             It.IsAny<DateTime>(),
@@ -415,7 +194,7 @@ public class PositionExtractorTests
             It.IsAny<CancellationToken>()), Times.Once);
 
         // Verify the time progression accounts for DST fallback
-        var timeGrid = grid.BuildHourlyTimeGrid(dayAheadDate, "Europe/Berlin").ToList();
+        var timeGrid = _fixture.TimeGridBuilder.BuildHourlyTimeGrid(dayAheadDate, "Europe/Berlin").ToList();
         
         // Log the actual time grid for debugging
         _testOutputHelper.WriteLine($"Time grid for {dayAheadDate:yyyy-MM-dd} in Europe/Berlin (DST fallback):");
@@ -452,169 +231,53 @@ public class PositionExtractorTests
     public async Task Extract_LogsAppropriateMessages_ForSuccessfulExtraction()
     {
         // Arrange
+        _fixture.ResetMocks();
         var dayAheadDate = DateTime.Today.AddDays(1);
-        var trades = new[]
-        {
-            new PowerTrade(
-                dayAheadDate,
-                Enumerable.Range(1, 24).Select(p => new PowerPeriod(p, 100)).ToArray()
-            )
-        };
-
-        var mockTradeService = new Mock<ITradeService>();
-        mockTradeService.Setup(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(trades);
-
-        var mockScheduleCalculator = new Mock<IScheduleCalculator>();
-        mockScheduleCalculator.Setup(x => x.CalculateDayAheadDate()).Returns(dayAheadDate);
-        mockScheduleCalculator.Setup(x => x.GetCurrentTimeInConfiguredTimeZone()).Returns(DateTime.UtcNow);
-
-        var mockFileSystem = new Mock<IFileSystem>();
-        mockFileSystem.Setup(x => x.DirectoryExists(It.IsAny<string>())).Returns(true);
-
-        var mockCsvWriter = new Mock<ICsvWriter>();
-        mockCsvWriter.Setup(x => x.WriteToFileAsync(It.IsAny<IEnumerable<PowerPosition>>(), It.IsAny<DateTime>(),
-                It.IsAny<DateTime>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var grid = new TimeGridBuilder(new NullLogger<TimeGridBuilder>());
-        var aggregator = new PositionAggregator(grid, new NullLogger<PositionAggregator>());
-        var cfg = new ApplicationConfiguration
-        {
-            OutputFolderPath = Path.GetTempPath(),
-            TimeZoneId = "Europe/Berlin"
-        };
-        var timeProvider = new FakeTimeProvider();
-        timeProvider.SetUtcNow(new DateTimeOffset(2024, 1, 2, 12, 0, 0, TimeSpan.Zero));
-
-        var extractor = new PositionExtractor(
-            mockTradeService.Object,
-            aggregator,
-            mockCsvWriter.Object,
-            cfg,
-            timeProvider,
-            mockScheduleCalculator.Object,
-            new NullLogger<PositionExtractor>());
+        _fixture.SetupSuccessfulExtraction(dayAheadDate);
 
         // Act
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await extractor.ExtractPositionsAsync(cts.Token);
+        using var cts = _fixture.CreateCancellationTokenSource();
+        await _fixture.PositionExtractor.ExtractPositionsAsync(cts.Token);
 
         // Assert
-        mockTradeService.Verify(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Once);
-        mockCsvWriter.Verify(
-            x => x.WriteToFileAsync(It.IsAny<IEnumerable<PowerPosition>>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _fixture.VerifyTradeServiceCalledOnce();
+        _fixture.VerifyCsvWriterCalledOnce();
     }
 
     [Fact]
     public async Task Extract_HandlesCancellation_Properly()
     {
         // Arrange
-        var mockTradeService = new Mock<ITradeService>();
-        mockTradeService.Setup(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
-            .Returns<DateTime, CancellationToken>((_, ct) =>
-            {
-                ct.ThrowIfCancellationRequested();
-                return Task.FromResult(Enumerable.Empty<PowerTrade>());
-            });
-
-        var mockScheduleCalculator = new Mock<IScheduleCalculator>();
-        mockScheduleCalculator.Setup(x => x.CalculateDayAheadDate()).Returns(DateTime.Today.AddDays(1));
-        mockScheduleCalculator.Setup(x => x.GetCurrentTimeInConfiguredTimeZone()).Returns(DateTime.UtcNow);
-
-        var mockFileSystem = new Mock<IFileSystem>();
-        mockFileSystem.Setup(x => x.DirectoryExists(It.IsAny<string>())).Returns(true);
-
-        var mockCsvWriter = new Mock<ICsvWriter>();
-
-        var grid = new TimeGridBuilder(new NullLogger<TimeGridBuilder>());
-        var aggregator = new PositionAggregator(grid, new NullLogger<PositionAggregator>());
-        var cfg = new ApplicationConfiguration
-        {
-            OutputFolderPath = Path.GetTempPath(),
-            TimeZoneId = "Europe/Berlin"
-        };
-        var timeProvider = new FakeTimeProvider();
-        timeProvider.SetUtcNow(new DateTimeOffset(2024, 1, 2, 12, 0, 0, TimeSpan.Zero));
-
-        var extractor = new PositionExtractor(
-            mockTradeService.Object,
-            aggregator,
-            mockCsvWriter.Object,
-            cfg,
-            timeProvider,
-            mockScheduleCalculator.Object,
-            new NullLogger<PositionExtractor>());
+        _fixture.ResetMocks();
+        _fixture.SetupCancellation();
 
         // Act & Assert
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
         // OperationCanceledException is thrown when cancellation is requested
-        await Assert.ThrowsAsync<OperationCanceledException>(() => extractor.ExtractPositionsAsync(cts.Token));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => _fixture.PositionExtractor.ExtractPositionsAsync(cts.Token));
 
-        mockTradeService.Verify(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Once);
+        _fixture.VerifyTradeServiceCalledOnce();
     }
 
     [Fact]
     public async Task Extract_HandlesDirectoryCreation_WhenOutputDirectoryDoesNotExist()
     {
         // Arrange
+        _fixture.ResetMocks();
         var dayAheadDate = DateTime.Today.AddDays(1);
-        var trades = new[]
-        {
-            new PowerTrade(
-                dayAheadDate,
-                Enumerable.Range(1, 24).Select(p => new PowerPeriod(p, 100)).ToArray()
-            )
-        };
-
-        var mockTradeService = new Mock<ITradeService>();
-        mockTradeService.Setup(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(trades);
-
-        var mockScheduleCalculator = new Mock<IScheduleCalculator>();
-        mockScheduleCalculator.Setup(x => x.CalculateDayAheadDate()).Returns(dayAheadDate);
-        mockScheduleCalculator.Setup(x => x.GetCurrentTimeInConfiguredTimeZone()).Returns(DateTime.UtcNow);
-
-        var mockFileSystem = new Mock<IFileSystem>();
-        mockFileSystem.Setup(x => x.DirectoryExists(It.IsAny<string>())).Returns(false);
-        mockFileSystem.Setup(x => x.CreateDirectory(It.IsAny<string>()));
-
-        var mockCsvWriter = new Mock<ICsvWriter>();
-        mockCsvWriter.Setup(x => x.WriteToFileAsync(It.IsAny<IEnumerable<PowerPosition>>(), It.IsAny<DateTime>(),
-                It.IsAny<DateTime>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var grid = new TimeGridBuilder(new NullLogger<TimeGridBuilder>());
-        var aggregator = new PositionAggregator(grid, new NullLogger<PositionAggregator>());
-        var cfg = new ApplicationConfiguration
-        {
-            OutputFolderPath = Path.GetTempPath(),
-            TimeZoneId = "Europe/Berlin"
-        };
-        var timeProvider = new FakeTimeProvider();
-        timeProvider.SetUtcNow(new DateTimeOffset(2024, 1, 2, 12, 0, 0, TimeSpan.Zero));
-
-        var extractor = new PositionExtractor(
-            mockTradeService.Object,
-            aggregator,
-            mockCsvWriter.Object,
-            cfg,
-            timeProvider,
-            mockScheduleCalculator.Object,
-            new NullLogger<PositionExtractor>());
+        _fixture.SetupSuccessfulExtraction(dayAheadDate);
+        _fixture.SetupDirectoryCreation();
 
         // Act
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await extractor.ExtractPositionsAsync(cts.Token);
+        using var cts = _fixture.CreateCancellationTokenSource();
+        await _fixture.PositionExtractor.ExtractPositionsAsync(cts.Token);
 
         // Assert
-        mockTradeService.Verify(x => x.GetTradesAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Once);
-        mockCsvWriter.Verify(
-            x => x.WriteToFileAsync(It.IsAny<IEnumerable<PowerPosition>>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _fixture.VerifyTradeServiceCalledOnce();
+        _fixture.VerifyCsvWriterCalledOnce();
+        // Note: Directory creation verification is not applicable when using mocked CsvWriter
     }
 
 }

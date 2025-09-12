@@ -1,30 +1,30 @@
-﻿using Microsoft.Extensions.Logging.Abstractions;
-using PowerTradePosition.Domain.Domain;
-using PowerTradePosition.Domain.Interfaces;
+﻿using PowerTradePosition.Domain.UnitTests.Fixtures;
 
 namespace PowerTradePosition.Domain.UnitTests;
 
-public class AggregatorTests
+public class AggregatorTests : IClassFixture<AggregatorFixture>
 {
+    private readonly AggregatorFixture _fixture;
+
+    public AggregatorTests(AggregatorFixture fixture)
+    {
+        _fixture = fixture;
+    }
     [Fact]
     public void AggregatePositions_SumsByHour_AndConvertsToUtc_Berlin()
     {
-        var logger = new NullLogger<TimeGridBuilder>();
-        ITimeGridBuilder grid = new TimeGridBuilder(logger);
-        var aggLogger = new NullLogger<PositionAggregator>();
-        var aggregator = new PositionAggregator(grid, aggLogger);
+        // Arrange
+        _fixture.ResetMocks();
+        var dayAheadDate = new DateTime(2023, 7, 2);
+        var trades = _fixture.CreateVariableVolumeTrades(dayAheadDate);
 
-        var trades = new List<PowerTrade>
-        {
-            new(
-                new DateTime(2023, 7, 2),
-                Enumerable.Range(1, 24).Select(p => new PowerPeriod(p, p <= 11 ? 150 : 80)).ToArray()
-            )
-        };
+        // Act
+        var positions = _fixture.PositionAggregator.AggregatePositionsByHour(trades, "Europe/Berlin").ToList();
 
-        var positions = aggregator.AggregatePositionsByHour(trades, "Europe/Berlin").ToList();
-
-        Assert.Equal(24, positions.Count);
+        // Assert
+        var (isValid, errorMessage) = _fixture.CheckPositionAggregation(positions, 24);
+        Assert.True(isValid, errorMessage);
+        
         // Spot check first hours per example (Berlin is UTC+2 in July)
         Assert.Equal(new DateTime(2023, 7, 1, 22, 0, 0, DateTimeKind.Utc), positions[0].DateTime);
         Assert.Equal(150, positions[0].Volume);
@@ -35,22 +35,19 @@ public class AggregatorTests
     [Fact]
     public void AggregatePositions_HandlesMultipleTrades_SumsVolumes()
     {
-        var logger = new NullLogger<TimeGridBuilder>();
-        ITimeGridBuilder grid = new TimeGridBuilder(logger);
-        var aggLogger = new NullLogger<PositionAggregator>();
-        var aggregator = new PositionAggregator(grid, aggLogger);
+        // Arrange
+        _fixture.ResetMocks();
+        var dayAheadDate = new DateTime(2023, 7, 2);
+        var trades = _fixture.CreateMultipleTradesForSummation(dayAheadDate);
 
-        var trade1 = new PowerTrade(
-            new DateTime(2023, 7, 2),
-            Enumerable.Range(1, 24).Select(p => new PowerPeriod(p, 100)).ToArray()
-        );
-        var trade2 = new PowerTrade(
-            new DateTime(2023, 7, 2),
-            Enumerable.Range(1, 24).Select(p => new PowerPeriod(p, -20)).ToArray()
-        );
+        // Act
+        var positions = _fixture.PositionAggregator.AggregatePositionsByHour(trades, "Europe/Berlin").ToList();
 
-        var positions = aggregator.AggregatePositionsByHour([trade1, trade2], "Europe/Berlin").ToList();
-
-        Assert.All(positions, p => Assert.Equal(80, p.Volume));
+        // Assert
+        var (isValid, errorMessage) = _fixture.CheckPositionAggregation(positions, 24);
+        Assert.True(isValid, errorMessage);
+        
+        var (isVolumeValid, volumeErrorMessage) = _fixture.CheckSummationVolumes(positions, 80);
+        Assert.True(isVolumeValid, volumeErrorMessage);
     }
 }

@@ -1,72 +1,65 @@
-using Microsoft.Extensions.Logging.Abstractions;
-using Moq;
 using PowerTradePosition.Domain.Domain;
-using PowerTradePosition.Domain.Interfaces;
+using PowerTradePosition.Domain.UnitTests.Fixtures;
 
 namespace PowerTradePosition.Domain.UnitTests;
 
-public class CsvWriterTests
+public class CsvWriterTests : IClassFixture<CsvWriterFixture>
 {
+    private readonly CsvWriterFixture _fixture;
+
+    public CsvWriterTests(CsvWriterFixture fixture)
+    {
+        _fixture = fixture;
+    }
     [Fact]
     public async Task WriteToFile_WritesHeaderAndFormattedRows()
     {
         // Arrange
-        var tempDir = Path.GetTempPath();
+        _fixture.ResetMocks();
+        _fixture.SetupDirectoryExists();
+        var positions = _fixture.CreateDecimalPositions();
+        var dayAheadDate = new DateTime(2023, 7, 2);
+        var extractionTime = new DateTime(2023, 7, 1, 19, 15, 0);
+        var expectedFileName = _fixture.GenerateExpectedFilename(dayAheadDate, extractionTime);
+        var expectedFilePath = _fixture.GetExpectedFilePath(expectedFileName);
+
         try
         {
-            var mockFileSystem = new Mock<IFileSystem>();
-            mockFileSystem.Setup(x => x.DirectoryExists(It.IsAny<string>())).Returns(true);
-            
-            var configuration = new ApplicationConfiguration
-            {
-                OutputFolderPath = tempDir,
-                TimeZoneId = "Europe/Berlin"
-            };
-            
-            var logger = new NullLogger<CsvWriter>();
-            var writer = new CsvWriter(mockFileSystem.Object, configuration, logger);
+            // Act
+            using var cts = _fixture.CreateCancellationTokenSource();
+            await _fixture.CsvWriter.WriteToFileAsync(positions, dayAheadDate, extractionTime, _fixture.TempDirectory, cts.Token);
 
-            var positions = new List<PowerPosition>
-            {
-                new(new DateTime(2023, 7, 1, 22, 0, 0, DateTimeKind.Utc), 150),
-                new(new DateTime(2023, 7, 1, 23, 0, 0, DateTimeKind.Utc), 80.5)
-            };
-
-            var dayAheadDate = new DateTime(2023, 7, 2);
-            var extractionTime = new DateTime(2023, 7, 1, 19, 15, 0);
-
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await writer.WriteToFileAsync(positions, dayAheadDate, extractionTime, tempDir, cts.Token);
-
-            // The file should be created with the generated filename
-            const string expectedFileName = "PowerPosition_20230702_202307011915.csv";
-            var expectedFilePath = Path.Combine(tempDir, expectedFileName);
-            
+            // Assert
             Assert.True(File.Exists(expectedFilePath), $"Expected file {expectedFilePath} to exist");
 
-            var lines = await File.ReadAllLinesAsync(expectedFilePath, cts.Token);
-
-            Assert.Equal("Datetime;Volume", lines[0]);
-            Assert.Equal("2023-07-01T22:00:00Z;150.00", lines[1]);
-            Assert.Equal("2023-07-01T23:00:00Z;80.50", lines[2]);
-            Assert.DoesNotContain(',', lines[1]);
-            Assert.DoesNotContain(',', lines[2]);
-            Assert.Contains('.', lines[1]);
-            Assert.Contains('.', lines[2]);
-
-            // Clean up the test file
-            if (File.Exists(expectedFilePath)) File.Delete(expectedFilePath);
-        }
-        catch
-        {
-            // Clean up any files that might have been created
-            var testFiles = Directory.GetFiles(tempDir, "PowerPosition_*.csv");
-            foreach (var file in testFiles)
+            var expectedLines = new List<string>
             {
-                // ReSharper disable once EmptyGeneralCatchClause
-                try { File.Delete(file); } catch { }
+                "Datetime;Volume",
+                "2023-07-01T22:00:00Z;150.00",
+                "2023-07-01T23:00:00Z;80.50"
+            };
+
+            var (isValid, errorMessage) = await _fixture.CheckFileContentAsync(expectedFilePath, expectedLines, cts.Token);
+            Assert.True(isValid, errorMessage);
+
+            // Validate CSV format requirements
+            var (isFormatValid1, formatError1) = _fixture.CheckCsvFormat(expectedLines[1]);
+            Assert.True(isFormatValid1, formatError1);
+            
+            var (isFormatValid2, formatError2) = _fixture.CheckCsvFormat(expectedLines[2]);
+            Assert.True(isFormatValid2, formatError2);
+        }
+        finally
+        {
+            // Clean up the test file
+            try
+            {
+                if (File.Exists(expectedFilePath)) File.Delete(expectedFilePath);
             }
-            throw;
+            catch
+            {
+                // Ignore cleanup errors
+            }
         }
     }
 
@@ -77,19 +70,17 @@ public class CsvWriterTests
         string expected)
     {
         // Arrange
-        var mockFileSystem = new Mock<IFileSystem>();
-        var configuration = new ApplicationConfiguration();
-        var logger = new NullLogger<CsvWriter>();
-        var writer = new CsvWriter(mockFileSystem.Object, configuration, logger);
-
+        _fixture.ResetMocks();
         var dayAhead = new DateTime(y1, m1, d1);
         var extractionUtc = new DateTime(y2, m2, d2, h2, min2, 0, DateTimeKind.Utc);
 
         // Act
-        var name = writer.GenerateFileName(dayAhead, extractionUtc);
+        var name = _fixture.CsvWriter.GenerateFileName(dayAhead, extractionUtc);
 
         // Assert
         Assert.Equal(expected, name);
+        var (isValid, errorMessage) = _fixture.CheckFilenameFormat(name);
+        Assert.True(isValid, errorMessage);
     }
 
     [Fact]
@@ -101,20 +92,18 @@ public class CsvWriterTests
         // Expected filename: PowerPosition_20250907_202509060917.csv (if 09:17 was local time)
         // But if 09:17 was UTC, then the filename should be: PowerPosition_20250907_202509060917.csv
         
-        var mockFileSystem = new Mock<IFileSystem>();
-        var configuration = new ApplicationConfiguration();
-        var logger = new NullLogger<CsvWriter>();
-        var writer = new CsvWriter(mockFileSystem.Object, configuration, logger);
-
+        _fixture.ResetMocks();
         var dayAheadDate = new DateTime(2025, 9, 7); // 2025-09-07
         var extractionTimeUtc = new DateTime(2025, 9, 6, 9, 17, 43, DateTimeKind.Utc); // 09:17:43 UTC
 
         // Act
-        var actualFilename = writer.GenerateFileName(dayAheadDate, extractionTimeUtc);
+        var actualFilename = _fixture.CsvWriter.GenerateFileName(dayAheadDate, extractionTimeUtc);
 
         // Assert
         var expectedFilename = "PowerPosition_20250907_202509060917.csv";
         Assert.Equal(expectedFilename, actualFilename);
+        var (isValid, errorMessage) = _fixture.CheckFilenameFormat(actualFilename);
+        Assert.True(isValid, errorMessage);
     }
 
     [Theory]
@@ -125,31 +114,25 @@ public class CsvWriterTests
     public void GenerateFileName_WithEdgeCases_ProducesCorrectFilename(int year, int month, int day, int hour, int minute, int second, string expected)
     {
         // Arrange
-        var mockFileSystem = new Mock<IFileSystem>();
-        var configuration = new ApplicationConfiguration();
-        var logger = new NullLogger<CsvWriter>();
-        var writer = new CsvWriter(mockFileSystem.Object, configuration, logger);
-
+        _fixture.ResetMocks();
         // Calculate the correct day-ahead date based on the extraction time
         var extractionTimeUtc = new DateTime(year, month, day, hour, minute, second, DateTimeKind.Utc);
         var dayAheadDate = extractionTimeUtc.Date.AddDays(1);
 
         // Act
-        var actualFilename = writer.GenerateFileName(dayAheadDate, extractionTimeUtc);
+        var actualFilename = _fixture.CsvWriter.GenerateFileName(dayAheadDate, extractionTimeUtc);
 
         // Assert
         Assert.Equal(expected, actualFilename);
+        var (isValid, errorMessage) = _fixture.CheckFilenameFormat(actualFilename);
+        Assert.True(isValid, errorMessage);
     }
 
     [Fact]
     public void GenerateFileName_WithDifferentDateTimeKinds_HandlesCorrectly()
     {
         // Arrange
-        var mockFileSystem = new Mock<IFileSystem>();
-        var configuration = new ApplicationConfiguration();
-        var logger = new NullLogger<CsvWriter>();
-        var writer = new CsvWriter(mockFileSystem.Object, configuration, logger);
-
+        _fixture.ResetMocks();
         var dayAheadDate = new DateTime(2025, 9, 7);
         
         // Test with different DateTimeKind values
@@ -158,104 +141,83 @@ public class CsvWriterTests
         var extractionTimeLocal = new DateTime(2025, 9, 6, 9, 17, 43, DateTimeKind.Local);
 
         // Act
-        var filenameUtc = writer.GenerateFileName(dayAheadDate, extractionTimeUtc);
-        var filenameUnspecified = writer.GenerateFileName(dayAheadDate, extractionTimeUnspecified);
-        var filenameLocal = writer.GenerateFileName(dayAheadDate, extractionTimeLocal);
+        var filenameUtc = _fixture.CsvWriter.GenerateFileName(dayAheadDate, extractionTimeUtc);
+        var filenameUnspecified = _fixture.CsvWriter.GenerateFileName(dayAheadDate, extractionTimeUnspecified);
+        var filenameLocal = _fixture.CsvWriter.GenerateFileName(dayAheadDate, extractionTimeLocal);
 
         // Assert - All should produce the same filename since we're only using the date/time components
         var expectedFilename = "PowerPosition_20250907_202509060917.csv";
         Assert.Equal(expectedFilename, filenameUtc);
         Assert.Equal(expectedFilename, filenameUnspecified);
         Assert.Equal(expectedFilename, filenameLocal);
+        
+        // Validate format for all
+        var (isValidUtc, errorUtc) = _fixture.CheckFilenameFormat(filenameUtc);
+        Assert.True(isValidUtc, errorUtc);
+        
+        var (isValidUnspecified, errorUnspecified) = _fixture.CheckFilenameFormat(filenameUnspecified);
+        Assert.True(isValidUnspecified, errorUnspecified);
+        
+        var (isValidLocal, errorLocal) = _fixture.CheckFilenameFormat(filenameLocal);
+        Assert.True(isValidLocal, errorLocal);
     }
 
     [Fact]
     public void GenerateFileName_FormatValidation_MatchesSpecification()
     {
         // Arrange
-        var mockFileSystem = new Mock<IFileSystem>();
-        var configuration = new ApplicationConfiguration();
-        var logger = new NullLogger<CsvWriter>();
-        var writer = new CsvWriter(mockFileSystem.Object, configuration, logger);
-
+        _fixture.ResetMocks();
         var dayAheadDate = new DateTime(2025, 9, 7);
         var extractionTimeUtc = new DateTime(2025, 9, 6, 9, 17, 43, DateTimeKind.Utc);
 
         // Act
-        var filename = writer.GenerateFileName(dayAheadDate, extractionTimeUtc);
+        var filename = _fixture.CsvWriter.GenerateFileName(dayAheadDate, extractionTimeUtc);
 
         // Assert - Validate the filename format matches specification
-        // Format: PowerPosition_YYYYMMDD_YYYYMMDDHHMM.csv
-        Assert.StartsWith("PowerPosition_", filename);
-        Assert.EndsWith(".csv", filename);
-        
-        var parts = filename.Replace("PowerPosition_", "").Replace(".csv", "").Split('_');
-        Assert.Equal(2, parts.Length);
-        
-        // First part: YYYYMMDD (day-ahead date)
-        Assert.Equal("20250907", parts[0]);
-        Assert.Equal(8, parts[0].Length);
-        Assert.True(int.TryParse(parts[0], out _));
-        
-        // Second part: YYYYMMDDHHMM (extraction timestamp)
-        Assert.Equal("202509060917", parts[1]);
-        Assert.Equal(12, parts[1].Length);
-        // Note: The timestamp part is too large for int32, so we'll use long instead
-        Assert.True(long.TryParse(parts[1], out _), $"Failed to parse '{parts[1]}' as long integer");
-        
-        // Additional validation: ensure the filename matches expected format
         var expectedFilename = "PowerPosition_20250907_202509060917.csv";
         Assert.Equal(expectedFilename, filename);
+        
+        // Use fixture validation method
+        var (isValid, errorMessage) = _fixture.CheckFilenameFormat(filename);
+        Assert.True(isValid, errorMessage);
     }
 
     [Fact]
     public async Task WriteToFile_WithEmptyPositions_CreatesFileWithHeaderOnly()
     {
         // Arrange
-        var tempDir = Path.GetTempPath();
+        _fixture.ResetMocks();
+        _fixture.SetupDirectoryExists();
+        var positions = _fixture.CreateEmptyPositions();
+        var dayAheadDate = new DateTime(2023, 7, 2);
+        var extractionTime = new DateTime(2023, 7, 1, 19, 15, 0);
+        var expectedFileName = _fixture.GenerateExpectedFilename(dayAheadDate, extractionTime);
+        var expectedFilePath = _fixture.GetExpectedFilePath(expectedFileName);
+
         try
         {
-            var mockFileSystem = new Mock<IFileSystem>();
-            mockFileSystem.Setup(x => x.DirectoryExists(It.IsAny<string>())).Returns(true);
-            
-            var configuration = new ApplicationConfiguration
-            {
-                OutputFolderPath = tempDir,
-                TimeZoneId = "Europe/Berlin"
-            };
-            
-            var logger = new NullLogger<CsvWriter>();
-            var writer = new CsvWriter(mockFileSystem.Object, configuration, logger);
+            // Act
+            using var cts = _fixture.CreateCancellationTokenSource();
+            await _fixture.CsvWriter.WriteToFileAsync(positions, dayAheadDate, extractionTime, _fixture.TempDirectory, cts.Token);
 
-            var dayAheadDate = new DateTime(2023, 7, 2);
-            var extractionTime = new DateTime(2023, 7, 1, 19, 15, 0);
-
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await writer.WriteToFileAsync(new List<PowerPosition>(0), dayAheadDate, extractionTime, tempDir, cts.Token);
-
-            const string expectedFileName = "PowerPosition_20230702_202307011915.csv";
-            var expectedFilePath = Path.Combine(tempDir, expectedFileName);
-            
+            // Assert
             Assert.True(File.Exists(expectedFilePath), $"Expected file {expectedFilePath} to exist");
 
-            var lines = await File.ReadAllLinesAsync(expectedFilePath, cts.Token);
-
-            Assert.Single(lines);
-            Assert.Equal("Datetime;Volume", lines[0]);
-
-            // Clean up the test file
-            if (File.Exists(expectedFilePath)) File.Delete(expectedFilePath);
+            var expectedLines = new List<string> { "Datetime;Volume" };
+            var (isValid, errorMessage) = await _fixture.CheckFileContentAsync(expectedFilePath, expectedLines, cts.Token);
+            Assert.True(isValid, errorMessage);
         }
-        catch
+        finally
         {
-            // Clean up any files that might have been created
-            var testFiles = Directory.GetFiles(tempDir, "PowerPosition_*.csv");
-            foreach (var file in testFiles)
+            // Clean up the test file
+            try
             {
-                // ReSharper disable once EmptyGeneralCatchClause
-                try { File.Delete(file); } catch { }
+                if (File.Exists(expectedFilePath)) File.Delete(expectedFilePath);
             }
-            throw;
+            catch
+            {
+                // Ignore cleanup errors
+            }
         }
     }
 
@@ -263,16 +225,7 @@ public class CsvWriterTests
     public async Task WriteToFile_WithCancellationToken_CancelsOperation()
     {
         // Arrange
-        var tempDir = Path.GetTempPath();
-        var mockFileSystem = new Mock<IFileSystem>();
-        var configuration = new ApplicationConfiguration
-        {
-            OutputFolderPath = tempDir,
-            TimeZoneId = "Europe/Berlin"
-        };
-        var logger = new NullLogger<CsvWriter>();
-        var writer = new CsvWriter(mockFileSystem.Object, configuration, logger);
-
+        _fixture.ResetMocks();
         var positions = new List<PowerPosition>
         {
             new(new DateTime(2023, 7, 1, 22, 0, 0, DateTimeKind.Utc), 150)
@@ -281,11 +234,10 @@ public class CsvWriterTests
         var dayAheadDate = new DateTime(2023, 7, 2);
         var extractionTime = new DateTime(2023, 7, 1, 19, 15, 0);
 
-        using var cts = new CancellationTokenSource();
-        await cts.CancelAsync(); // Cancel immediately
+        using var cts = _fixture.CreateCancelledTokenSource();
 
         // Act & Assert
         await Assert.ThrowsAsync<TaskCanceledException>(() => 
-            writer.WriteToFileAsync(positions, dayAheadDate, extractionTime, tempDir, cts.Token));
+            _fixture.CsvWriter.WriteToFileAsync(positions, dayAheadDate, extractionTime, _fixture.TempDirectory, cts.Token));
     }
 }
