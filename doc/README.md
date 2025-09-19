@@ -47,7 +47,7 @@ The solution follows SOLID principles and implements several design patterns:
 - **Repository Pattern**: ITradeService interface for data access
 - **Strategy Pattern**: Different implementations for CSV writing, file system operations, and scheduling
 - **Factory Pattern**: Configuration service for creating application settings
-- **Observer Pattern**: Background service for scheduled operations
+- **Background Service Pattern**: Hosted service for scheduled operations with polling mechanism
 - **Separation of Concerns**: Clean architecture with dedicated scheduling logic
 
 For detailed architectural information, see [ARCHITECTURE.md](ARCHITECTURE.md).
